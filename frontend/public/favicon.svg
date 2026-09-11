@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#070B1A"/>
+  <rect x="4" y="4" width="56" height="56" rx="12" fill="#0B1229"/>
+  <text x="32" y="40" text-anchor="middle" font-family="'Arial Black','Arial',sans-serif"
+        font-weight="900" font-size="30" fill="#FFC800">FB</text>
+  <rect x="22" y="46" width="20" height="5" rx="2.5" fill="#F03A2E"/>
+</svg>

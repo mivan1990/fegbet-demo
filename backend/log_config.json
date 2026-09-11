@@ -1,0 +1,51 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "console": {
+      "()": "uvicorn.logging.DefaultFormatter",
+      "fmt": "%(levelprefix)s %(asctime)s | %(name)s | %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S",
+      "use_colors": true
+    },
+    "console_access": {
+      "()": "uvicorn.logging.AccessFormatter",
+      "fmt": "%(levelprefix)s %(asctime)s | %(client_addr)s | %(request_line)s -> %(status_code)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S",
+      "use_colors": true
+    },
+    "plain_file": {
+      "()": "log_utils.PlainFormatter",
+      "fmt": "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+      "datefmt": "%Y-%m-%d %H:%M:%S"
+    }
+  },
+  "handlers": {
+    "console": {
+      "class": "logging.StreamHandler",
+      "formatter": "console",
+      "stream": "ext://sys.stderr"
+    },
+    "console_access": {
+      "class": "logging.StreamHandler",
+      "formatter": "console_access",
+      "stream": "ext://sys.stdout"
+    },
+    "file": {
+      "()": "log_utils.MakedirsRotatingFileHandler",
+      "formatter": "plain_file",
+      "filename": "logs/server.log",
+      "maxBytes": 5242880,
+      "backupCount": 10,
+      "encoding": "utf-8"
+    }
+  },
+  "loggers": {
+    "uvicorn": { "handlers": ["console", "file"], "level": "INFO", "propagate": false },
+    "uvicorn.error": { "handlers": ["console", "file"], "level": "INFO", "propagate": false },
+    "uvicorn.access": { "handlers": ["console_access", "file"], "level": "INFO", "propagate": false },
+    "app": { "handlers": ["console", "file"], "level": "INFO", "propagate": false },
+    "app.access": { "handlers": ["console", "file"], "level": "INFO", "propagate": false }
+  },
+  "root": { "handlers": ["console", "file"], "level": "WARNING" }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "FEG BET",
+  "short_name": "FEG BET",
+  "description": "Pariuri pe orgoliu intre colegii de la FEG.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#070B1A",
+  "theme_color": "#070B1A",
+  "lang": "ro",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

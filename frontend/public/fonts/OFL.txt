@@ -1,0 +1,12 @@
+Fonturile din acest folder sunt auto-gazduite (serverul intern poate sa nu aiba internet).
+Toate sunt licentiate SIL Open Font License 1.1 (https://openfontlicense.org).
+
+- Bricolage Grotesque — (c) The Bricolage Grotesque Project Authors
+  https://github.com/ateliertriay/bricolage
+- Inter — (c) The Inter Project Authors
+  https://github.com/rsms/inter
+- JetBrains Mono — (c) 2020 The JetBrains Mono Project Authors
+  https://github.com/JetBrains/JetBrainsMono
+
+Subseturile latin / latin-ext au fost preluate din distributia Fontsource
+(https://fontsource.org). latin-ext este necesar pentru diacriticele romanesti (a-breve, s-virgula, t-virgula).
