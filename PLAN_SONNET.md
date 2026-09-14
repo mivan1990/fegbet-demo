@@ -939,14 +939,14 @@ Serviciu Windows prin **NSSM**, numit `FEGBet`:
 
 > `--host 127.0.0.1` pentru că accesul din exterior vine prin reverse proxy, nu direct.
 
-### Reverse proxy pentru `fotbal.fortunagames.ro`
+### Reverse proxy pentru `fegbet.mariusivan.ro`
 Alegerea utilizatorului: reverse proxy. Documentează în `INSTALARE_SERVER.md` varianta cu
 **IIS + ARR + URL Rewrite** (cea mai firească pe Windows Server):
 
 1. Instalează **URL Rewrite** și **Application Request Routing** din Web Platform Installer.
 2. În IIS Manager → Server → *Application Request Routing Cache* → *Server Proxy Settings* →
    bifează **Enable proxy**.
-3. Creează un site nou `fotbal.fortunagames.ro`, binding pe portul 80 (și 443 după certificat).
+3. Creează un site nou `fegbet.mariusivan.ro`, binding pe portul 80 (și 443 după certificat).
 4. În `web.config`-ul site-ului, regulă de rewrite:
    ```xml
    <rule name="FEGBet" stopProcessing="true">
@@ -957,7 +957,7 @@ Alegerea utilizatorului: reverse proxy. Documentează în `INSTALARE_SERVER.md` 
    Plus `<serverVariables>` pentru `X-Forwarded-For` / `X-Forwarded-Proto`.
 5. HTTPS: certificat prin **win-acme** (Let's Encrypt) dacă domeniul e public, sau certificat
    intern dacă e doar în rețea.
-6. DNS: `fotbal.fortunagames.ro` → IP-ul serverului (A record).
+6. DNS: `fegbet.mariusivan.ro` → IP-ul serverului (A record).
 7. Firewall: deschide 80/443 pentru exterior; **NU** deschide 8100.
 
 **Backend:** citește IP-ul real din `X-Forwarded-For` pentru access log și rate limiting
@@ -1019,7 +1019,7 @@ DATABASE_URL=sqlite:///./fegbet.db
 | Marcator | **Per meci**, doar la meciurile echipei FEG |
 | Punctaj | Puncte fixe, adunate; diferențiate pe dificultate; fără cote înmulțite |
 | Bonus bilet perfect | Implementat, dar **dezactivat** din default |
-| Hosting | Același server Windows, port 8100, reverse proxy IIS pe `fotbal.fortunagames.ro` |
+| Hosting | Același server Windows, port 8100, reverse proxy IIS pe `fegbet.mariusivan.ro` |
 | Repo | Nou și independent, `/Users/mariusivan/Projects/PERSONAL/FEGBet` |
 | Domeniu email | `@mariusivan.ro`, din `.env`, **niciodată comunicat utilizatorului** |
 | Temă | Dark only, roșu/galben/albastru în raport 10/30/60 |
