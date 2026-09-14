@@ -47,12 +47,19 @@ from services.groups import (
 )
 from services.groups import GroupResult
 from services.points import recalc_all_user_points
+from services.scoring import DEFAULT_POINTS
 from services.security import hash_password
 
 # Sămânța fixă: aceleași date la fiecare rulare, deci demo-ul arată la fel
 # după fiecare resetare orară de pe server.
 SEED = 20260911
 DEMO_PASSWORD = "demo1234"
+
+# Contul cu care intra automat orice vizitator al demo-ului. Biletele lui NU
+# sunt aleatoare (vezi _place_tickets si sectiunea "bilete de vitrina" de mai
+# jos) — sunt alese pe rand, ca pagina „Biletele mele" sa arate din prima un
+# bilet castigat, unul pierdut, cateva partiale si toate cele cinci piete.
+VIZITATOR_EMAIL = "test@mariusivan.ro"
 
 # --------------------------------------------------------------------- echipe
 # (nume, short_name) — short_name are maximum 4 caractere in model.
@@ -201,6 +208,8 @@ def _place_tickets(
     is_group: bool,
     feg_players: list[Player],
     scorer_ids: set[int],
+    visitor: User,
+    showcase_state: dict,
 ) -> None:
     """Bilete pe un meci, inainte de validarea lui — exact ordinea din realitate."""
     h, a = res["home_score"], res["away_score"]
@@ -214,6 +223,12 @@ def _place_tickets(
     if has_feg:
         markets.append("SCORER")
 
+    # Vizitatorul (VIZITATOR_EMAIL) ramane in aceasta bucla la fel ca oricare
+    # alt utilizator — inclusiv el consuma rng.random()/rng.sample() mai jos —
+    # ca sa nu se schimbe deloc secventa de numere aleatoare pentru ceilalti
+    # 13 utilizatori. Biletul lui "aleator" rezultat e insa sters imediat dupa
+    # bucla (mai jos) si inlocuit, pe unele meciuri alese, cu un bilet de
+    # vitrina construit deliberat — vezi _maybe_place_showcase_ticket.
     for user, accuracy in users:
         if rng.random() > 0.72:  # nu toata lumea joaca fiecare meci
             continue
@@ -260,6 +275,218 @@ def _place_tickets(
                 )
             )
     db.flush()
+
+    _maybe_place_showcase_ticket(
+        db,
+        visitor,
+        match,
+        res,
+        is_group=is_group,
+        has_feg=has_feg,
+        feg_players=feg_players,
+        scorer_ids=scorer_ids,
+        state=showcase_state,
+    )
+
+
+# ============================================================ bilete de vitrina
+# Vizitatorul (VIZITATOR_EMAIL) nu primeste bilete aleatoare (vezi _place_tickets
+# mai sus) — primeste un set fix, ales pe rand, ca "Biletele mele" sa arate din
+# prima toate cazurile: un bilet castigat integral (cel mai mare punctaj),
+# unul pierdut integral, mai multe partiale cu proportii diferite, un bilet
+# cu o singura selectie castigata, si toate cele cinci piete — fiecare aparuta
+# de mai multe ori, macar o data corecta si macar o data gresita.
+#
+# Nu foloseste deloc `rng`: alegerea corecta/gresita e facuta direct din
+# rezultatul deja calculat al meciului (`res`), deci nu consuma numere din
+# fluxul aleator si nu afecteaza biletele celorlalti 13 utilizatori.
+#
+# Meciurile sunt alese dupa pozitia lor in ordinea de procesare (a N-a oara
+# cand apare un meci de tipul cerut), nu dupa ID fix, ca sa ramana valabil
+# indiferent de mici schimbari in generarea grupelor/bracket-ului.
+def _max_points_total_goals_line(h: int, a: int) -> float:
+    """Linia (din {0.5,1.5,2.5,3.5}) care aduce cele mai multe puncte pentru un
+    pariu CORECT de total goluri, dat scorul real — folosita doar la biletul
+    de vitrina "castigat integral", ca sa fie chiar cel mai gras bilet al lui."""
+    total = h + a
+    best_line, best_points = 0.5, -1
+    for line in (0.5, 1.5, 2.5, 3.5):
+        key = f"pts.goals.over.{line}" if total > line else f"pts.goals.under.{line}"
+        points = DEFAULT_POINTS[key]
+        if points > best_points:
+            best_points, best_line = points, line
+    return best_line
+
+
+def _showcase_pick(
+    market: str,
+    h: int,
+    a: int,
+    res: dict,
+    *,
+    correct: bool,
+    scorer_ids: set[int],
+    feg_players: list[Player],
+    total_goals_line: float,
+) -> tuple[str, float | None, int | None]:
+    """(pick, line, player_id) alese deliberat corect/gresit pentru piata data."""
+    if market == "WINNER":
+        right = _winner_pick(h, a)
+        pick = right if correct else next(p for p in ("HOME", "AWAY", "DRAW") if p != right)
+        return pick, None, None
+    if market == "QUALIFY":
+        right = _qualify_pick(res)
+        pick = right if correct else ("AWAY" if right == "HOME" else "HOME")
+        return pick, None, None
+    if market == "BTTS":
+        right = "YES" if h >= 1 and a >= 1 else "NO"
+        pick = right if correct else ("NO" if right == "YES" else "YES")
+        return pick, None, None
+    if market == "TOTAL_GOALS":
+        right = "OVER" if (h + a) > total_goals_line else "UNDER"
+        pick = right if correct else ("UNDER" if right == "OVER" else "OVER")
+        return pick, total_goals_line, None
+    if market == "SCORER":
+        if correct:
+            player_id = sorted(scorer_ids)[0]
+        else:
+            missed = sorted(p.id for p in feg_players if p.id not in scorer_ids)
+            player_id = missed[0]
+        return "SCORED", None, player_id
+    raise ValueError(f"piata necunoscuta pentru bilet de vitrina: {market}")
+
+
+def _build_showcase_ticket(
+    db,
+    visitor: User,
+    match: Match,
+    res: dict,
+    *,
+    feg_players: list[Player],
+    scorer_ids: set[int],
+    picks: list[tuple[str, bool]],
+    total_goals_line: float = 1.5,
+) -> None:
+    h, a = res["home_score"], res["away_score"]
+
+    # Pe meciul asta vizitatorul primeste biletul de vitrina in locul celui
+    # aleator, daca bucla din _place_tickets i-a facut unul — uq_ticket_user_match
+    # nu permite doua. Se sterge DOAR aici, adica doar pe cele 8 meciuri de
+    # vitrina; pe restul isi pastreaza biletele obisnuite, ca sa aiba un istoric
+    # credibil si un loc decent in clasament, nu doar opt exemple.
+    stray = db.execute(
+        select(Ticket).where(Ticket.user_id == visitor.id, Ticket.match_id == match.id)
+    ).scalar_one_or_none()
+    if stray is not None:
+        db.delete(stray)
+        db.flush()
+
+    ticket = Ticket(user_id=visitor.id, match_id=match.id, status="OPEN")
+    db.add(ticket)
+    db.flush()
+    for market, correct in picks:
+        pick, line, player_id = _showcase_pick(
+            market, h, a, res,
+            correct=correct,
+            scorer_ids=scorer_ids,
+            feg_players=feg_players,
+            total_goals_line=total_goals_line,
+        )
+        db.add(
+            TicketSelection(
+                ticket_id=ticket.id, market=market, pick=pick, line=line, player_id=player_id
+            )
+        )
+    db.flush()
+
+
+def _maybe_place_showcase_ticket(
+    db,
+    visitor: User,
+    match: Match,
+    res: dict,
+    *,
+    is_group: bool,
+    has_feg: bool,
+    feg_players: list[Player],
+    scorer_ids: set[int],
+    state: dict,
+) -> None:
+    """Alege, pe baza contorului din `state`, daca meciul curent e unul dintre
+    meciurile de vitrina si — daca da — construieste biletul potrivit.
+
+    Contoare separate pentru fiecare categorie de meci (grupa+FEG, grupa fara
+    FEG, eliminatorii+FEG); "a N-a aparitie" identifica meciul, nu ID-ul lui.
+    """
+    if is_group:
+        if has_feg:
+            state["feg_group"] = state.get("feg_group", 0) + 1
+            slot = state["feg_group"]
+            if slot == 1:
+                # T1 — biletul castigat integral, cel mai gras: toate cele 4
+                # piete disponibile pe un meci de grupa cu FEG, toate corecte.
+                _build_showcase_ticket(
+                    db, visitor, match, res,
+                    feg_players=feg_players, scorer_ids=scorer_ids,
+                    picks=[("WINNER", True), ("TOTAL_GOALS", True), ("BTTS", True), ("SCORER", True)],
+                    total_goals_line=_max_points_total_goals_line(res["home_score"], res["away_score"]),
+                )
+        else:
+            state["plain_group"] = state.get("plain_group", 0) + 1
+            slot = state["plain_group"]
+            if slot == 1:
+                # T2 — pierdut integral: toate cele 3 piete disponibile, toate gresite.
+                _build_showcase_ticket(
+                    db, visitor, match, res,
+                    feg_players=feg_players, scorer_ids=scorer_ids,
+                    picks=[("WINNER", False), ("TOTAL_GOALS", False), ("BTTS", False)],
+                )
+            elif slot == 2:
+                # T3 — o singura selectie, castigata.
+                _build_showcase_ticket(
+                    db, visitor, match, res,
+                    feg_players=feg_players, scorer_ids=scorer_ids,
+                    picks=[("WINNER", True)],
+                )
+            elif slot == 3:
+                # T4 — partial, 1 din 3.
+                _build_showcase_ticket(
+                    db, visitor, match, res,
+                    feg_players=feg_players, scorer_ids=scorer_ids,
+                    picks=[("WINNER", True), ("TOTAL_GOALS", False), ("BTTS", False)],
+                )
+            elif slot == 4:
+                # T5 — partial, 2 din 3.
+                _build_showcase_ticket(
+                    db, visitor, match, res,
+                    feg_players=feg_players, scorer_ids=scorer_ids,
+                    picks=[("WINNER", False), ("TOTAL_GOALS", True), ("BTTS", True)],
+                )
+    else:
+        if has_feg:
+            state["feg_ko"] = state.get("feg_ko", 0) + 1
+            slot = state["feg_ko"]
+            if slot == 1:
+                # T6 — sferturi: partial, 3 din 4 (SCORER gresit).
+                _build_showcase_ticket(
+                    db, visitor, match, res,
+                    feg_players=feg_players, scorer_ids=scorer_ids,
+                    picks=[("WINNER", True), ("QUALIFY", True), ("BTTS", True), ("SCORER", False)],
+                )
+            elif slot == 2:
+                # T7 — semifinala: partial, 1 din 2 (QUALIFY gresit de data asta).
+                _build_showcase_ticket(
+                    db, visitor, match, res,
+                    feg_players=feg_players, scorer_ids=scorer_ids,
+                    picks=[("QUALIFY", False), ("TOTAL_GOALS", True)],
+                )
+            elif slot == 3:
+                # T8 — finala: partial, 2 din 3.
+                _build_showcase_ticket(
+                    db, visitor, match, res,
+                    feg_players=feg_players, scorer_ids=scorer_ids,
+                    picks=[("WINNER", True), ("QUALIFY", True), ("BTTS", False)],
+                )
 
 
 # ====================================================================== rulare
@@ -321,6 +548,9 @@ def build(force: bool) -> None:
             users.append((user, accuracy))
         db.commit()
 
+        visitor = next(u for u, _ in users if u.email == VIZITATOR_EMAIL)
+        showcase_state: dict = {}
+
         # 5. meciurile de grupa: data, bilete, validare
         group_matches = list(
             db.execute(
@@ -347,6 +577,7 @@ def build(force: bool) -> None:
             _place_tickets(
                 db, rng, users, match, res,
                 is_group=True, feg_players=feg_players, scorer_ids=scorer_ids,
+                visitor=visitor, showcase_state=showcase_state,
             )
             db.commit()
 
@@ -428,6 +659,7 @@ def build(force: bool) -> None:
                 _place_tickets(
                     db, rng, users, match, res,
                     is_group=False, feg_players=feg_players, scorer_ids=scorer_ids,
+                    visitor=visitor, showcase_state=showcase_state,
                 )
                 db.commit()
 
