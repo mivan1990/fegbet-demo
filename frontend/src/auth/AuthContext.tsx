@@ -9,6 +9,7 @@ import {
 } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { useQueryClient } from '@tanstack/react-query'
 import { api, setToken, setUnauthorizedHandler, getToken } from '@/api/client'
 import type { AuthUser, TokenResponse } from '@/api/types'
 import { useToast } from '@/components/ui'
@@ -37,14 +38,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     getToken() || (DEMO_MODE && !hasOptedOut()) ? 'loading' : 'anonymous',
   )
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const toast = useToast()
   const bootstrapped = useRef(false)
 
-  const applyToken = useCallback((res: TokenResponse) => {
-    setToken(res.access_token)
-    setUser(res.user)
-    setStatus('authenticated')
-  }, [])
+  const applyToken = useCallback(
+    (res: TokenResponse) => {
+      setToken(res.access_token)
+      setUser(res.user)
+      setStatus('authenticated')
+      // Rutele „ale mele" raspund altceva odata ce exista un token, iar paginile
+      // publice pot sa fi cerut deja datele — ca om nelogat — inainte ca
+      // autentificarea sa termine. Fara invalidare raman cu raspunsul anonim in
+      // cache: in demo, unde login-ul e automat, un vizitator aterizat direct pe
+      // /meciuri vedea „N-ai pariat pe meciul asta" pe fiecare meci, desi are bilete.
+      void queryClient.invalidateQueries()
+    },
+    [queryClient],
+  )
 
   const loginAsDemo = useCallback(
     async (role: DemoRole) => {
@@ -134,8 +145,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null)
     setStatus('anonymous')
     setOptedOut(true) // in demo: nu ne mai logam automat la loc
+    void queryClient.invalidateQueries() // acelasi motiv ca la applyToken, in sens invers
     navigate('/')
-  }, [navigate])
+  }, [navigate, queryClient])
 
   const value = useMemo<AuthContextValue>(
     () => ({ user, status, login, register, logout, refresh, loginAsDemo }),

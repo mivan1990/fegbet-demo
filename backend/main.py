@@ -171,11 +171,25 @@ if settings.e2e_test_mode:
 # --- montare frontend (SPA) -----------------------------------------------------
 # Dupa toate rutele /api. In dev, frontend/dist nu exista si se sare peste.
 if FRONTEND_DIST.is_dir():
-    app.mount(
-        "/assets",
-        StaticFiles(directory=FRONTEND_DIST / "assets"),
-        name="assets",
-    )
+
+    class _ImmutableAssets(StaticFiles):
+        """Fisierele din /assets au hash-ul continutului in nume (index-a1b2c3.js),
+        deci o versiune noua vine intotdeauna cu alt nume. Se pot tine cat vrea
+        browserul, nu devin niciodata gresite."""
+
+        def file_response(self, *args, **kwargs):
+            response = super().file_response(*args, **kwargs)
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            return response
+
+    app.mount("/assets", _ImmutableAssets(directory=FRONTEND_DIST / "assets"), name="assets")
+
+    # `index.html` e singurul fisier cu nume fix, si el e cel care spune ce bundle
+    # se incarca. Fara headerul asta nu trimitem niciun Cache-Control, iar browserul
+    # isi alege singur cat sa-l tina — pornind de la vechimea fisierului, ceea ce
+    # inseamna ca dupa un deploy vizitatorii raman pe codul vechi, uneori zile.
+    # „no-cache" nu interzice cache-ul, cere doar revalidare la fiecare cerere.
+    _NO_CACHE = {"Cache-Control": "no-cache"}
 
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
@@ -184,4 +198,4 @@ if FRONTEND_DIST.is_dir():
         candidate = FRONTEND_DIST / full_path
         if full_path and candidate.is_file():
             return FileResponse(candidate)
-        return FileResponse(FRONTEND_DIST / "index.html")
+        return FileResponse(FRONTEND_DIST / "index.html", headers=_NO_CACHE)
