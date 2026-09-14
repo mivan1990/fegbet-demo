@@ -127,9 +127,27 @@ DEMO_USERS: list[tuple[str, str, float]] = [
 ]
 
 # Cand s-a jucat turneul — tot in trecut, ca sa fie limpede ca s-a incheiat.
-TODAY = datetime.now(timezone.utc).replace(hour=19, minute=0, second=0, microsecond=0)
+TODAY = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
 GROUP_ROUND_DAYS = {1: -45, 2: -42, 3: -39}
 KNOCKOUT_DAYS = {1: -32, 2: -25, 3: -18}  # sferturi / semifinale / finala
+
+# Orele de start. Turneul e unul de birou, deci se joaca seara, dupa program:
+# orele de mai jos sunt UTC, iar Romania e pe UTC+3 vara (iulie-august), deci
+# 15:00 UTC = 18:00 ora locala.
+#
+# Meciurile nu incep toate in aceeasi clipa. O etapa de grupe are 8 meciuri, si
+# se joaca cate doua odata — doua terenuri in paralel — la fiecare ora. In
+# eliminatorii se joaca pe rand, cu pauza intre ele.
+GROUP_FIRST_KICKOFF_UTC = 15  # 18:00 local; etapa tine pana la 21:00
+GROUP_MATCHES_PER_SLOT = 2
+GROUP_SLOT_MINUTES = 60
+
+# round_no -> (ora UTC a primului meci, minute intre meciuri succesive)
+KNOCKOUT_KICKOFF = {
+    1: (14, 90),   # sferturi: 17:00, 18:30, 20:00, 21:30 local
+    2: (16, 120),  # semifinale: 19:00 si 21:00 local
+    3: (17, 0),    # finala, singura: 20:00 local
+}
 
 
 # ====================================================================== scoruri
@@ -557,8 +575,17 @@ def build(force: bool) -> None:
                 select(Match).where(Match.phase == "GROUP").order_by(Match.group_id, Match.round_no, Match.id)
             ).scalars()
         )
+        # Orele: cele 8 meciuri ale unei etape se esaloneaza cate doua pe ora.
+        # Ordinea in cadrul etapei e cea de mai sus (grupa, apoi id), deci e
+        # stabila intre rulari — conteaza, fiindcă baza se reconstruieste orar.
+        by_round: dict[int, list[Match]] = {}
         for match in group_matches:
-            match.scheduled_at = TODAY + timedelta(days=GROUP_ROUND_DAYS[match.round_no])
+            by_round.setdefault(match.round_no, []).append(match)
+        for round_no, round_matches in by_round.items():
+            day = TODAY + timedelta(days=GROUP_ROUND_DAYS[round_no], hours=GROUP_FIRST_KICKOFF_UTC)
+            for i, match in enumerate(round_matches):
+                slot = i // GROUP_MATCHES_PER_SLOT
+                match.scheduled_at = day + timedelta(minutes=slot * GROUP_SLOT_MINUTES)
         db.commit()
 
         for match in group_matches:
@@ -635,8 +662,13 @@ def build(force: bool) -> None:
                     .order_by(Match.bracket_position)
                 ).scalars()
             )
-            for match in matches:
-                match.scheduled_at = TODAY + timedelta(days=KNOCKOUT_DAYS[round_no])
+            first_hour, gap_minutes = KNOCKOUT_KICKOFF[round_no]
+            for slot, match in enumerate(matches):
+                match.scheduled_at = TODAY + timedelta(
+                    days=KNOCKOUT_DAYS[round_no],
+                    hours=first_hour,
+                    minutes=slot * gap_minutes,
+                )
                 home = db.get(Team, match.home_team_id)
                 away = db.get(Team, match.away_team_id)
                 feg_in = feg.id in (match.home_team_id, match.away_team_id)
